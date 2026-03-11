@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/ftui/app.py
+src/ftui/fly_client.py
+src/ftui/main.py
+src/ftui.egg-info/PKG-INFO
+src/ftui.egg-info/SOURCES.txt
+src/ftui.egg-info/dependency_links.txt
+src/ftui.egg-info/entry_points.txt
+src/ftui.egg-info/requires.txt
+src/ftui.egg-info/top_level.txt

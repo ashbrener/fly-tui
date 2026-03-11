@@ -1,0 +1,48 @@
+Metadata-Version: 2.4
+Name: ftui
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.14
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.3.1
+Requires-Dist: rich>=14.3.3
+Requires-Dist: textual>=8.1.1
+
+# ftui - Fly.io Terminal UI
+
+A Python-based TUI for managing your Fly.io machines.
+
+## Features
+- **List Machines:** View all machines in your current Fly app context.
+- **Real-time Logs:** Stream logs for specific machines.
+- **Scaling:** Quickly scale machine count and VM size.
+- **SSH Access:** Interactive shell access to your machines.
+- **Machine Control:** Start and stop machines directly from the UI.
+
+## Installation
+Requires [uv](https://github.com/astral-sh/uv).
+
+```bash
+uv tool install .
+```
+
+## Usage
+Run in a directory with a `fly.toml` file:
+
+```bash
+ftui
+```
+
+For development/testing without a live account:
+```bash
+ftui --mock
+```
+
+## Keybindings
+- `r`: Refresh machine list
+- `l`: View logs for selected machine
+- `s`: Scale app (count/VM size)
+- `h`: SSH into selected machine
+- `Ctrl+s`: Start selected machine
+- `Ctrl+x`: Stop selected machine
+- `q`: Quit / Back

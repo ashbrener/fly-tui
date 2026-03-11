@@ -1,0 +1,2 @@
+[console_scripts]
+ftui = ftui.main:main

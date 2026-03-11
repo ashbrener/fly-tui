@@ -1,0 +1,58 @@
+#dialog {
+    width: 50;
+    height: auto;
+    border: thick $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#dialog-title {
+    text-align: center;
+    width: 100%;
+    background: $primary;
+    color: $text-primary;
+    margin-bottom: 1;
+}
+
+#dialog-buttons {
+    margin-top: 1;
+    align: right middle;
+}
+
+#loading-screen {
+    align: center middle;
+}
+
+#balloon {
+    text-align: center;
+    width: 100%;
+    color: $accent;
+    height: 15;
+}
+
+#loading-text {
+    text-align: center;
+    width: 100%;
+    color: $primary;
+    text-style: bold;
+}
+
+RichLog:focus {
+    border: solid $accent;
+}
+
+DataTable {
+    height: 1fr;
+    border: none;
+    padding: 0;
+}
+
+DataTable > .datatable--header {
+    background: $surface;
+    color: $text-muted;
+    text-style: bold;
+}
+
+DataTable > .datatable--row {
+    height: 3;
+}

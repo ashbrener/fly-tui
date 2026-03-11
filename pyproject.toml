@@ -1,0 +1,31 @@
+[project]
+name = "fly-tui"
+version = "0.1.0"
+description = "A terminal UI for managing Fly.io machines"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Fly.io Community" }
+]
+keywords = ["fly", "flyio", "tui", "textual", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+]
+dependencies = [
+    "textual>=8.1.1",
+    "rich>=14.3.3",
+    "click>=8.3.1",
+]
+
+[project.scripts]
+ftui = "ftui.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ftui"]
