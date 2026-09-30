@@ -47,3 +47,17 @@ def test_state_mode_cycle():
     assert next_state_mode("all") == "started"
     assert next_state_mode("started") == "stopped"
     assert next_state_mode("stopped") == "all"
+
+
+def test_matches_scope_by_name():
+    assert parse_filter("app:acme-*").matches_scope("acme", "acme-prod", "acme-web")
+    assert not parse_filter("app:acme-*").matches_scope("acme")  # no app to match
+    assert parse_filter("cron").matches_scope("acme", "acme-prod", "acme-legacy-cron")
+    assert parse_filter("acct:acme -app:*-staging").matches_scope("acme", "acme-prod", "acme-web")
+    assert not parse_filter("-app:*-staging").matches_scope("acme", "acme-staging",
+                                                            "acme-web-staging")
+    assert parse_filter("ACME").matches_scope("acme")
+    # state: and region: are about machines, never names
+    assert not parse_filter("acct:acme state:stopped").matches_scope("acme", "acme-prod", "x")
+    assert not parse_filter("-region:fra").matches_scope("acme", "acme-prod", "x")
+    assert parse_filter("").matches_scope("acme", "acme-prod", "x")

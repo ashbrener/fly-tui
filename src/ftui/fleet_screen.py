@@ -239,11 +239,16 @@ class FleetScreen(Screen):
         self.app_errors: Dict[Tuple[str, str], str] = {}
         self.initial_filter = initial_filter
         self.scope = Scope()
+        # The node the user last selected. The filter can hide it, which moves
+        # `scope` to the first match; it comes back once it matches again.
+        self.user_scope = Scope()
         self.machine_filter: Filter = parse_filter(initial_filter)
         self.state_mode = "all"
         self.shown: List[Machine] = []
         self._tree_nodes: Dict[Scope, object] = {}
         self._tree_shape: Optional[Tuple] = None
+        # (apps, accounts) shown in the sidebar, for the header while filtering
+        self._nav_counts: Tuple[int, int] = (0, 0)
         self._refreshing = False
 
     def compose(self) -> ComposeResult:
@@ -287,13 +292,14 @@ class FleetScreen(Screen):
         interval = self.refresh_interval
         n_apps = len(self.apps)
         n_acct = len(self.fleet.accounts)
+        if self.filtering:
+            apps = f"{self._nav_counts[0]}/{n_apps} apps, {self._nav_counts[1]}/{n_acct} accounts"
+        else:
+            apps = f"{n_apps} apps, {n_acct} accounts"
         status = " (refreshing...)" if is_refreshing else ""
         shown = f"{len(self.shown)}/{len(self.machines)} machines"
         mode = "" if self.state_mode == "all" else f" [{self.state_mode}]"
-        self.app.title = (
-            f"FTUI - {shown}, {n_apps} apps, {n_acct} accounts{mode} "
-            f"(refresh: {interval}s){status}"
-        )
+        self.app.title = f"FTUI - {shown}, {apps}{mode} (refresh: {interval}s){status}"
         self.app.sub_title = self.scope.describe()
 
     # -- data -----------------------------------------------------------------
@@ -342,22 +348,58 @@ class FleetScreen(Screen):
             text.append(" ✖ ", style="bold red")
             text.append(error[:40], style="red")
             return text
-        text.append(f" {len(machines)} ", style="dim")
-        text.append_text(state_summary(machines))
+        if self.filtering:
+            # matched/total; the dots show the matching machines only
+            matched = [m for m in machines if self.matches(m)]
+            text.append(f" {len(matched)}/{len(machines)} ", style="dim")
+            text.append_text(state_summary(matched))
+        else:
+            text.append(f" {len(machines)} ", style="dim")
+            text.append_text(state_summary(machines))
         if warn:
             text.append(" ⚠", style="bold yellow")
         return text
+
+    def _visible_nav(
+        self, groups: Dict[Tuple[str, str, str], List[Machine]]
+    ) -> Tuple[set, set]:
+        """(app keys, account names) the sidebar shows under the filter and `f`.
+
+        An app is shown if any of its machines match, or if the filter matches
+        the app itself by name (so apps with 0 machines, or that failed to
+        load, still show for `app:`, `org:`, `acct:` or free text). An account
+        with no apps at all is shown if the filter matches its name.
+        """
+        accounts = self.fleet.accounts
+        if not self.filtering:
+            return set(groups), set(accounts) | {a for a, _, _ in groups}
+        f = self.machine_filter
+        by_name = self.state_mode == "all"
+        apps = {
+            key for key, ms in groups.items()
+            if any(self.matches(m) for m in ms) or (by_name and f.matches_scope(*key))
+        }
+        with_apps = {a for a, _, _ in groups}
+        names = {a for a, _, _ in apps} | {
+            a for a in accounts if a not in with_apps and by_name and f.matches_scope(a)
+        }
+        return apps, names
 
     def render_tree(self) -> None:
         tree = self.query_one(Tree)
         groups = self._group()
         accounts = self.fleet.accounts
         errors = self.account_errors
+        visible_apps, visible_accounts = self._visible_nav(groups)
+        self._nav_counts = (len(visible_apps), len(visible_accounts))
 
-        # account -> org -> [app]
-        shape: Dict[str, Dict[str, List[str]]] = {name: {} for name in accounts}
+        # account -> org -> [app], only what the filter leaves
+        shape: Dict[str, Dict[str, List[str]]] = {
+            name: {} for name in accounts if name in visible_accounts
+        }
         for (account, org, app) in sorted(groups):
-            shape.setdefault(account, {}).setdefault(org, []).append(app)
+            if (account, org, app) in visible_apps:
+                shape.setdefault(account, {}).setdefault(org, []).append(app)
         shape_key = tuple((a, tuple((o, tuple(apps)) for o, apps in orgs.items()))
                           for a, orgs in shape.items())
 
@@ -375,9 +417,12 @@ class FleetScreen(Screen):
                     for app in apps:
                         s = Scope(account, org, app)
                         self._tree_nodes[s] = o_node.add_leaf(app, data=s)
-            if self.scope not in self._tree_nodes:
-                self.scope = Scope()
             tree.root.expand()
+            self._settle_scope()
+            # node lines exist once the tree has laid out the new nodes
+            self.call_after_refresh(
+                lambda: tree.move_cursor(self._tree_nodes.get(self.scope, tree.root))
+            )
 
         def under(scope: Scope) -> List[Machine]:
             return [m for key, ms in groups.items() if scope.contains(*key) for m in ms]
@@ -398,21 +443,51 @@ class FleetScreen(Screen):
                     read_only=bool(account and account.read_only),
                 ))
 
+    def _settle_scope(self) -> None:
+        """Keep the selected node if it still shows, else pick the first match.
+
+        The first match is the first shown node at the same level (app, org or
+        account), preferring one with matching machines, falling back to All.
+        The user's own choice is remembered and comes back when it matches
+        again, e.g. once the filter is cleared.
+        """
+        if self.user_scope in self._tree_nodes:
+            self.scope = self.user_scope
+            return
+
+        def level(s: Scope) -> int:
+            return 3 if s.app else 2 if s.org else 1 if s.account else 0
+
+        def has_matches(s: Scope) -> bool:
+            return any(s.contains(m.account, m.org, m.app) and self.matches(m)
+                       for m in self.machines)
+
+        same = [s for s in self._tree_nodes if level(s) == level(self.user_scope)]
+        same.sort(key=lambda s: not has_matches(s))  # stable: tree order otherwise
+        self.scope = same[0] if same else Scope()
+
     @on(Tree.NodeSelected, "#sidebar")
     def on_scope_selected(self, event: Tree.NodeSelected) -> None:
         if isinstance(event.node.data, Scope):
-            self.scope = event.node.data
+            self.scope = self.user_scope = event.node.data
             self.render_table()
             self.update_header()
 
     # -- table ----------------------------------------------------------------
 
-    def is_visible(self, m: Machine) -> bool:
-        if not self.scope.contains(m.account, m.org, m.app):
-            return False
+    @property
+    def filtering(self) -> bool:
+        """True while the filter bar or `f` hides anything."""
+        return not self.machine_filter.empty or self.state_mode != "all"
+
+    def matches(self, m: Machine) -> bool:
+        """The filter bar and `f`, regardless of the sidebar selection."""
         if self.state_mode != "all" and m.state != self.state_mode:
             return False
         return self.machine_filter.matches(m)
+
+    def is_visible(self, m: Machine) -> bool:
+        return self.scope.contains(m.account, m.org, m.app) and self.matches(m)
 
     @staticmethod
     def row_for(m: Machine) -> list:
@@ -473,6 +548,7 @@ class FleetScreen(Screen):
     @on(Input.Changed, "#filter")
     def on_filter_changed(self, event: Input.Changed) -> None:
         self.machine_filter = parse_filter(event.value)
+        self.render_tree()
         self.render_table()
 
     @on(Input.Submitted, "#filter")
@@ -490,6 +566,7 @@ class FleetScreen(Screen):
     def action_cycle_state(self) -> None:
         self.state_mode = next_state_mode(self.state_mode)
         self.app.notify(f"Showing {self.state_mode} machines")
+        self.render_tree()
         self.render_table()
 
     # -- actions --------------------------------------------------------------

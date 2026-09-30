@@ -7,12 +7,15 @@ Tokens match the whole field as a case-insensitive glob (`app:acme-*`), free
 text matches anywhere in any column. Repeating a key ORs its values
 (`region:fra region:ams`); different keys AND together. A leading `-`
 negates a token (`-state:started`).
+
+In the multi-account view the filter is global: it narrows the machines table
+and prunes the sidebar to the accounts, orgs and apps that match.
 """
 
 import fnmatch
 import shlex
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Filter key -> Machine attribute. Aliases are accepted for convenience.
 KEYS = {
@@ -49,6 +52,41 @@ class Filter:
             if not all(t in haystack for t in self.terms):
                 return False
         return True
+
+    @property
+    def targets_machines(self) -> bool:
+        """True if any token is about machines (`state:`, `region:`), not names."""
+        return any(a in MACHINE_KEYS for a in (*self.include, *self.exclude))
+
+    def matches_scope(self, account: str, org: Optional[str] = None,
+                      app: Optional[str] = None) -> bool:
+        """Whether the filter matches an account, org or app by name alone.
+
+        Used to keep apps with no matching machines in the sidebar (an app with
+        0 machines, or one that failed to load) when the filter names the app
+        itself. Filters with `state:` or `region:` tokens are about machines,
+        so they never match by name.
+        """
+        if self.targets_machines:
+            return False
+        fields = {"account": account, "org": org, "app": app}
+        for attr, patterns in self.include.items():
+            value = fields.get(attr)
+            if value is None or not any(_glob(value.lower(), p) for p in patterns):
+                return False
+        for attr, patterns in self.exclude.items():
+            value = fields.get(attr)
+            if value is not None and any(_glob(value.lower(), p) for p in patterns):
+                return False
+        if self.terms:
+            haystack = " ".join(v for v in (account, org, app) if v).lower()
+            if not all(t in haystack for t in self.terms):
+                return False
+        return True
+
+
+# Filter keys about machines rather than accounts, orgs or apps.
+MACHINE_KEYS = {"state", "region"}
 
 
 def _glob(value: str, pattern: str) -> bool:
