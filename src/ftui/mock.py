@@ -5,6 +5,7 @@ fetching, parsing and error handling code as the real thing.
 """
 
 import json
+import zlib
 from typing import Dict, List, Tuple
 
 import httpx
@@ -95,6 +96,7 @@ class MockFleet:
                 "metadata": {"fly_process_group": group},
                 "guest": {"cpu_kind": cpu_kind, "cpus": cpus, "memory_mb": mem},
                 "services": services,
+                "env": mock_env(app),
             },
             "checks": [{"name": "http", "status": "passing" if state == "started" else "critical"}],
         }
@@ -131,3 +133,107 @@ class MockFleet:
             for org, apps in orgs.items()
         ]
         return httpx.Response(200, json={"data": {"organizations": {"nodes": nodes}}})
+
+
+# -- inspect panel (`c`): deployed config, env and secret metadata --------------
+#
+# Secrets carry names, digests and status only, like `fly secrets list --json`.
+# There are no values here, and the inspector never asks for any.
+
+_ENV = {
+    "acme-web": {"APP_ENV": "production", "LOG_LEVEL": "info", "PORT": "8080",
+                 "PRIMARY_REGION": "ams", "FEATURE_CHECKOUT_V2": "true"},
+    "acme-web-staging": {"APP_ENV": "staging", "LOG_LEVEL": "debug", "PORT": "8080",
+                         "PRIMARY_REGION": "ams", "SEED_DEMO_DATA": "1"},
+    "acme-worker": {"APP_ENV": "production", "QUEUE": "default", "CONCURRENCY": "8"},
+    "globex-api": {"APP_ENV": "production", "PORT": "3000", "PRIMARY_REGION": "iad"},
+    "globex-db": {"PRIMARY_REGION": "iad"},
+    "tps-reports": {"APP_ENV": "production", "COVER_SHEET": "required"},
+    "mock-app-production": {"APP_ENV": "production", "LOG_LEVEL": "info", "PORT": "8080"},
+    "mock-app-staging": {"APP_ENV": "staging", "LOG_LEVEL": "debug", "PORT": "8080",
+                         "SEED_DEMO_DATA": "1"},
+}
+
+# app -> [(name, digest, status)]. Matching digests across apps mean the same value.
+_SECRETS = {
+    "acme-web": [
+        ("DATABASE_URL", "a1f0c3d9e2b47781", "Deployed"),
+        ("SESSION_SECRET", "5be2a0917c3d4e10", "Deployed"),
+        ("PAYMENTS_API_KEY", "9c4e1b7a2d5f3086", "Deployed"),
+        ("MAILER_TOKEN", "e7d2c9a41b0f5638", "Deployed"),
+    ],
+    "acme-web-staging": [
+        ("DATABASE_URL", "0d3b8e6fa9c21457", "Deployed"),
+        ("SESSION_SECRET", "c81f4a2e9b7d0365", "Deployed"),
+        ("PAYMENTS_API_KEY", "9c4e1b7a2d5f3086", "Deployed"),  # same as acme-web
+        ("DEBUG_TOOLBAR_TOKEN", "4a6e0c8b2f1d9753", "Staged"),
+    ],
+    "acme-worker": [
+        ("DATABASE_URL", "a1f0c3d9e2b47781", "Deployed"),
+        ("QUEUE_URL", "7f2b9d4c1e8a6035", "Deployed"),
+    ],
+    "globex-api": [
+        ("DATABASE_URL", "3e9a7c1f5b2d8046", "Deployed"),
+        ("JWT_SIGNING_KEY", "b6d1e8f03a9c2574", "Partial"),
+    ],
+    "tps-reports": [("PRINTER_TOKEN", "2c7e5a9d0f3b8164", "Deployed")],
+    "mock-app-production": [
+        ("DATABASE_URL", "f3a8c1e7d2b94056", "Deployed"),
+        ("API_KEY", "6d0b4f9e2a7c1583", "Deployed"),
+    ],
+    "mock-app-staging": [
+        ("DATABASE_URL", "81c5e2a9f0d7b346", "Deployed"),
+        ("API_KEY", "6d0b4f9e2a7c1583", "Deployed"),  # same as production
+    ],
+}
+
+# (app, what) -> error, to show per-tab error handling offline.
+_INSPECT_ERRORS = {
+    ("globex-db", "secrets"): "Not authorized to access secrets for this app",
+    ("acme-legacy-cron", "config"): "Could not find App",
+    ("acme-legacy-cron", "secrets"): "Could not find App",
+    ("acme-legacy-cron", "machines"): "Could not find App",
+}
+
+# Apps the single-app mock (FTUI_MOCK=1) can see, for the diff picker.
+MOCK_SINGLE_APPS = ("mock-app-production", "mock-app-staging")
+
+
+def mock_env(app: str) -> Dict[str, str]:
+    return dict(_ENV.get(app, {}))
+
+
+def _mock_config(app: str) -> dict:
+    env = mock_env(app)
+    region = env.get("PRIMARY_REGION", "ams")
+    return {
+        "app": app,
+        "primary_region": region,
+        "build": {"image": f"registry.fly.io/{app}:deployment-01K6"},
+        "deploy": {"strategy": "rolling"},
+        "env": env,
+        "http_service": {
+            "internal_port": int(env.get("PORT", "8080")),
+            "force_https": True,
+            "auto_stop_machines": "stop",
+            "min_machines_running": _MIN_RUNNING.get(app, 0),
+            "checks": [{"grace_period": "10s", "interval": "30s", "method": "GET", "path": "/health"}],
+        },
+        "vm": [{"size": "shared-cpu-1x", "memory": "512mb"}],
+    }
+
+
+def mock_inspect(app: str, what: str):
+    """Canned `fly config show` / `secrets list --json` / `machines list --json` data."""
+    from ftui.client import FlyError
+
+    if (app, what) in _INSPECT_ERRORS:
+        raise FlyError(_INSPECT_ERRORS[(app, what)])
+    if what == "config":
+        return _mock_config(app)
+    if what == "secrets":
+        return [{"name": n, "digest": d, "status": s} for n, d, s in _SECRETS.get(app, [])]
+    if what == "machines":
+        return [{"id": f"{zlib.crc32(app.encode()):014x}",
+                 "config": {"env": mock_env(app), "metadata": {"fly_process_group": "app"}}}]
+    raise ValueError(what)

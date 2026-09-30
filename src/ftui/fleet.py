@@ -72,6 +72,8 @@ class Machine:
     updated_at: str
     checks: str = ""
     min_running: int = 0
+    # The machine's config.env (non-secret), sorted. Used by the inspect panel.
+    env: Tuple[Tuple[str, str], ...] = field(default=(), compare=False)
 
     @property
     def key(self) -> str:
@@ -131,6 +133,9 @@ class Machine:
             updated_at=_ts(data.get("updated_at")),
             checks=checks_str,
             min_running=int(min_running),
+            env=tuple(sorted(
+                (str(k), "" if v is None else str(v)) for k, v in (config.get("env") or {}).items()
+            )),
         )
 
 
