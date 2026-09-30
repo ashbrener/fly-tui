@@ -11,6 +11,7 @@ from ftui.fleet_screen import ConfirmDialog, FleetScreen, build_fleet_screen
 from ftui.main import initial_filter, use_fleet_view
 
 EXISTING_KEYS = {"r", "l", "s", "h", "ctrl+s", "ctrl+x", "ctrl+r"}
+INSPECT_KEY = "c"  # added by the inspect panel; the only new single-app key
 
 
 def keys(screen_cls):
@@ -25,7 +26,7 @@ def no_accounts_config(tmp_path, monkeypatch):
 # -- the existing single-app view: regression tests ---------------------------
 
 def test_existing_keybindings_unchanged():
-    assert keys(MachineListScreen) == EXISTING_KEYS
+    assert keys(MachineListScreen) == EXISTING_KEYS | {INSPECT_KEY}
     assert keys(LogScreen) == {"q", "c", "ctrl+c"}
 
 
@@ -33,8 +34,9 @@ def test_fleet_keys_extend_without_collisions():
     fleet = keys(FleetScreen)
     assert EXISTING_KEYS <= fleet
     new = fleet - EXISTING_KEYS
-    assert new == {"slash", "f"}
-    assert not new & (EXISTING_KEYS | {"q", "c", "ctrl+c"})
+    assert new == {"slash", "f", INSPECT_KEY}
+    # `c` is Clear on the log screen only, which is a different screen
+    assert not new & (EXISTING_KEYS | {"q", "ctrl+c"})
 
 
 def test_fly_toml_without_config_keeps_single_app_view(tmp_path):

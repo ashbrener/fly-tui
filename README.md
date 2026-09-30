@@ -17,6 +17,7 @@ Built with Python and [Textual](https://textual.textualize.io/), `fly-tui` provi
 - **🐚 SSH Integration:** Drop into an interactive SSH console instantly.
 - **⚖️ Elastic Scaling:** Scale machine counts and VM sizes via intuitive modal dialogs.
 - **🎯 Cursor Stability:** Intelligent data diffing ensures your selection never flickers during refreshes.
+- **🔍 Inspect:** Read-only view of an app's deployed config, a machine's env, its secret names and digests, and a diff against its staging twin.
 - **🗂 Multiple Accounts:** One view of every machine across several Fly accounts, orgs and apps, with a filter bar and read-only accounts.
 
 ## 📦 Installation
@@ -64,7 +65,45 @@ The multi-account view (below) adds:
 | `Ctrl+s` | Start Machine |
 | `Ctrl+x` | Stop Machine |
 | `Ctrl+r` | Restart Machine |
+| `c` | Inspect config, env and secrets (read-only, [below](#-inspect)) |
 | `q` | Quit / Back |
+
+In the inspect panel:
+
+| Key | Action |
+|-----|--------|
+| `1`-`4` | Config / Env / Secrets / Diff tab (or click, or arrows on the tab bar) |
+| `a` | Pick the app to diff against |
+| `Esc` / `q` | Close the panel |
+
+## 🔍 Inspect
+
+Press `c` on a machine, in the single-app or the multi-account view, to open a
+read-only panel for its app. It changes nothing, so read-only accounts can use it.
+
+| Tab | Shows | Source |
+|-----|-------|--------|
+| Config | The deployed app config, as TOML | `fly config show --toml -a APP` |
+| Env | The selected machine's `config.env`, sorted | The machine data already fetched |
+| Secrets | Name, digest, status (Deployed / Staged / Partial) | `fly secrets list --json -a APP` |
+| Diff | Env and secrets against a second app | The same, for both apps |
+
+The Diff tab starts with the app's twin, the app whose name adds or removes a
+`-staging` suffix (`shop-api` ↔ `shop-api-staging`; `acme-prod` ↔ `acme-staging`).
+Press `a` to pick any other app. It lists:
+
+- env keys whose values differ, or that exist on one side only;
+- secret names that exist on one side only;
+- secrets with the **same digest on both** apps, labelled *same value on both*.
+  Matching digests mean matching values, so this flags e.g. production running
+  with a staging key.
+
+Secret **values are never fetched, shown or logged**: only names, digests and
+status are read, and any other field in the flyctl output is dropped. There is
+no `printenv` or SSH path. In the multi-account view every command runs as the
+app's own account (`FLY_API_TOKEN`). Each tab fails on its own: no permission
+for secrets, or flyctl missing, shows an error in that tab while the others
+still load. `--mock` has fake config, env and secrets, so the panel works offline.
 
 ## 🗂 Multiple accounts, orgs and apps
 
@@ -221,6 +260,9 @@ web region:fra region:ams
 - Health checks are often empty in the Machines API response, so the checks
   column is frequently blank.
 - The GraphQL query lists at most 500 apps per org.
+- Inspect reads config and secrets through `flyctl`, so those two tabs need it
+  installed; Env works without it. Env diffs compare one machine per app
+  (the same process group where possible), not every machine.
 
 ## 🤝 Contributing
 

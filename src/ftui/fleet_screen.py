@@ -25,6 +25,8 @@ from ftui.client import FlyError
 from ftui.config import Account
 from ftui.filters import Filter, next_state_mode, parse_filter
 from ftui.fleet import AppRef, FleetClient, Machine
+from ftui.inspect_screen import InspectScreen
+from ftui.inspector import AppChoice, Inspector
 from ftui.mock import MockFleet, mock_accounts
 
 STATE_STYLES = {
@@ -211,6 +213,7 @@ class FleetScreen(Screen):
         Binding("ctrl+s", "start", "Start"),
         Binding("ctrl+x", "stop", "Stop"),
         Binding("ctrl+r", "restart", "Restart"),
+        Binding("c", "inspect", "Inspect"),
     ]
 
     def __init__(
@@ -220,10 +223,13 @@ class FleetScreen(Screen):
         refresh_interval: int = 5,
         apps_interval: int = 60,
         initial_filter: str = "",
+        inspector: Optional[Inspector] = None,
     ):
         super().__init__()
         self.fleet = fleet
         self.actions = actions
+        # Read-only: config, env, secret names/digests. Allowed on read-only accounts.
+        self.inspector = inspector or Inspector(mock=actions.mock)
         self.refresh_interval = refresh_interval
         # Orgs and apps change rarely: list them less often than machines
         self.apps_interval = max(apps_interval, refresh_interval)
@@ -507,6 +513,28 @@ class FleetScreen(Screen):
     def action_logs(self) -> None:
         if m := self.selected_machine():
             self.app.push_screen(FleetLogScreen(m, self.fleet.accounts[m.account], self.actions))
+
+    def action_inspect(self) -> None:
+        """Read-only panel for the selected machine's app. Works on read-only accounts."""
+        m = self.selected_machine()
+        if m is None:
+            return
+        accounts = self.fleet.accounts
+        peers = [AppChoice(a.name, accounts[a.account]) for a in self.apps if a.account in accounts]
+
+        def known_env(choice: AppChoice, group: str) -> Optional[Tuple[Dict[str, str], str]]:
+            owner = choice.account.name if choice.account else None
+            ms = [x for x in self.machines if x.app == choice.app and x.account == owner]
+            if not ms:
+                return None
+            chosen = next((x for x in ms if group and x.process_group == group), ms[0])
+            return dict(chosen.env), chosen.id
+
+        self.app.push_screen(InspectScreen(
+            AppChoice(m.app, accounts.get(m.account)), m.id, dict(m.env), self.inspector,
+            process_group=m.process_group, peers=peers, known_env=known_env,
+            context=f"{m.account} / {m.org}",
+        ))
 
     def action_ssh(self) -> None:
         if (m := self.selected_machine()) and (account := self._writable(m)):
