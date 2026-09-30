@@ -17,6 +17,7 @@ Built with Python and [Textual](https://textual.textualize.io/), `fly-tui` provi
 - **🐚 SSH Integration:** Drop into an interactive SSH console instantly.
 - **⚖️ Elastic Scaling:** Scale machine counts and VM sizes via intuitive modal dialogs.
 - **🎯 Cursor Stability:** Intelligent data diffing ensures your selection never flickers during refreshes.
+- **🗂 Multiple Accounts:** One view of every machine across several Fly accounts, orgs and apps, with a filter bar and read-only accounts.
 
 ## 📦 Installation
 
@@ -43,7 +44,14 @@ ftui
 ### Options
 
 - `--refresh <seconds>`: Set a custom refresh interval (default: 5s).
-- `--mock`: Explore the UI with simulated data (no Fly account required).
+- `--mock`: Explore the UI with simulated data (no Fly account required). Without a `fly.toml` this shows a simulated multi-account fleet.
+
+The multi-account view (below) adds:
+
+- `--accounts <file>`: Accounts file (default: `~/.config/ftui/accounts.toml`).
+- `--app <glob>`, `--org <glob>`, `--account <glob>`: Open the multi-account view, pre-filtered.
+- `--all`: Open the multi-account view of everything, ignoring `./fly.toml`.
+- `--apps-refresh <seconds>`: How often orgs and apps are re-listed (default: 60s).
 
 ### ⌨️ Keybindings
 
@@ -57,6 +65,162 @@ ftui
 | `Ctrl+x` | Stop Machine |
 | `Ctrl+r` | Restart Machine |
 | `q` | Quit / Back |
+
+## 🗂 Multiple accounts, orgs and apps
+
+`ftui` can show machines across several Fly accounts, orgs and apps in one table.
+
+### When it opens
+
+The single-app view is unchanged: run in a directory with a `fly.toml` and no
+accounts config, `ftui` behaves exactly as before. The multi-account view opens
+when any of these is true:
+
+- `~/.config/ftui/accounts.toml` exists (or you pass `--accounts <file>`);
+- there is no `fly.toml` in the current directory;
+- you pass `--app`, `--org`, `--account` or `--all`.
+
+With no accounts config it uses your local `flyctl` login and shows every org
+and app that login can see. With a config, a local `fly.toml` becomes the
+starting filter (`app:<name>`); it is never required. `--all` skips that.
+
+### Accounts config
+
+`~/.config/ftui/accounts.toml` holds one `[[account]]` table per account:
+
+```toml
+[[account]]
+name = "acme"                 # label shown in the UI
+token = "fly"                 # the local flyctl login
+orgs = ["acme-prod"]          # optional: only these orgs (default: all the token sees)
+
+[[account]]
+name = "globex"
+token = "env:FLY_TOKEN_GLOBEX"
+read_only = true              # no start/stop/restart/scale/ssh
+
+[[account]]
+name = "initech"
+token = "op://Work/Fly Initech/token"
+
+[[account]]
+name = "personal"
+token = "keychain:fly-personal"
+exclude_apps = ["*-scratch"]
+```
+
+#### Token sources
+
+Tokens are never written in the file, only where to read them from. A raw token
+in `token` is refused.
+
+| `token` | Read from |
+|---------|-----------|
+| `fly` (default) | The local flyctl login (`fly auth token`) |
+| `env:NAME` | The environment variable `NAME` |
+| `op://vault/item/field` | 1Password CLI (`op read`) |
+| `keychain:service` | macOS Keychain (`security find-generic-password -s service -w`) |
+
+Each token is read once at startup. If one can't be read, that account shows
+`✖` with the error and the others still load.
+
+#### Fields
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `name` | yes | Label in the UI and for `acct:` filters. Must be unique. |
+| `token` | no | Token source (above). Default `fly`. |
+| `orgs` | no | Org slugs to show. Default: every org the token can see. |
+| `read_only` | no | `true` refuses start, stop, restart, scale and SSH. Default `false`. |
+| `apps` | no | Shell-style patterns (`shop-*`); only matching apps are shown. Default: every app. |
+| `exclude_apps` | no | Shell-style patterns; matching apps are hidden. Applied after `apps`. |
+
+`orgs`, `apps` and `exclude_apps` take a list or a single string. Patterns are
+case-sensitive `fnmatch` globs (`*`, `?`, `[abc]`).
+
+#### Example: one org as two groups
+
+`apps` and `exclude_apps` let one org show as two accounts in the sidebar. Here
+the `shop-*` apps get their own group, and everything else in the org stays
+under `acme`:
+
+```toml
+[[account]]
+name = "acme-shop"
+orgs = ["acme"]
+apps = ["shop-*"]
+
+[[account]]
+name = "acme"
+orgs = ["acme"]
+exclude_apps = ["shop-*"]
+```
+
+Both use the same token source, so the same token is read twice.
+
+### The view
+
+The sidebar is a tree of account → org → app with a machine count and a dot per
+machine state. `✖` marks an app or account that failed to load (the rest still
+load), `⚠` an app running fewer started machines than its `min_machines_running`,
+and `ro` a read-only account. Select a node to show just its machines.
+
+Keys, in addition to the ones above:
+
+| Key | Action |
+|-----|--------|
+| `/` | Filter (`Enter`/`Esc` back to the table) |
+| `f` | Cycle all / started only / stopped only |
+| `Tab` | Move between the sidebar, filter and table |
+
+### Filter syntax
+
+Press `/` and type free text and `key:value` tokens:
+
+| Token | Matches |
+|-------|---------|
+| `app:` | App name |
+| `org:` | Org slug |
+| `acct:` | Account name (also `account:`) |
+| `state:` | `started`, `stopped`, `suspended`, ... |
+| `region:` | Region code |
+
+Tokens match the whole value as a case-insensitive glob (`app:acme-*`); free text
+matches anywhere in the row. The same key repeated means OR
+(`region:fra region:ams`), different keys mean AND, and a leading `-` negates
+(`-state:started`). Examples:
+
+```
+state:stopped region:fra
+acct:acme -app:*-staging
+web region:fra region:ams
+```
+
+### Safety
+
+- Start, stop, restart and scale ask for confirmation (`y` / `n`), naming the
+  account, org, app and machine.
+- Accounts with `read_only = true` refuse start, stop, restart, scale and SSH.
+  Logs still work.
+- Each action runs `flyctl` as the machine's own account (`FLY_API_TOKEN`) and
+  app (`-a`), so it can't land on the wrong account.
+- Tokens are kept in memory only and never shown in errors or logs.
+
+### Performance
+
+- Orgs and apps come from one GraphQL query per account, re-run every
+  `--apps-refresh` seconds. If GraphQL is refused (e.g. an org-scoped token) and
+  the account lists `orgs`, it falls back to the Machines API per org.
+- Machines come from the Machines API, fetched in parallel 8 at a time, every
+  `--refresh` seconds. Each app has its own timeout, so a slow or broken app
+  marks only itself.
+
+### Limitations
+
+- The 1Password source is tested only with a mocked `op`, not against a real vault.
+- Health checks are often empty in the Machines API response, so the checks
+  column is frequently blank.
+- The GraphQL query lists at most 500 apps per org.
 
 ## 🤝 Contributing
 
