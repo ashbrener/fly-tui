@@ -128,3 +128,18 @@ def test_fly_toml_is_optional(tmp_path):
     assert config.read_fly_toml_app(tmp_path) is None
     (tmp_path / "fly.toml").write_text('app = "hp-flows"\n')
     assert config.read_fly_toml_app(tmp_path) == "hp-flows"
+
+
+def test_app_patterns_split_one_org_into_two_accounts():
+    accounts = parse_accounts(
+        '[[account]]\nname = "frisb"\norgs = ["starlogik"]\napps = ["frisb*"]\n'
+        '[[account]]\nname = "starlogik"\norgs = "starlogik"\nexclude_apps = "frisb*"\n'
+    )
+    frisb, starlogik = accounts
+    assert frisb.shows_app("frisb-api-staging") and not frisb.shows_app("wave")
+    assert starlogik.shows_app("wave") and not starlogik.shows_app("frisb")
+
+
+def test_no_app_patterns_shows_every_app():
+    (account,) = parse_accounts('[[account]]\nname = "a"\n')
+    assert account.shows_app("anything")

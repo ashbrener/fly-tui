@@ -9,6 +9,7 @@ the token can be read from:
     keychain:service  the macOS Keychain (`security find-generic-password -s service -w`)
 """
 
+import fnmatch
 import os
 import shutil
 import subprocess
@@ -32,8 +33,17 @@ class Account:
     token_source: str = "fly"
     orgs: Tuple[str, ...] = ()
     read_only: bool = False
+    # Shell-style app name patterns ("frisb-*"). Empty `apps` means every app.
+    apps: Tuple[str, ...] = ()
+    exclude_apps: Tuple[str, ...] = ()
     # Never shown in reprs, logs or errors.
     token: Optional[str] = field(default=None, repr=False, compare=False)
+
+    def shows_app(self, name: str) -> bool:
+        """Whether this account's `apps` / `exclude_apps` patterns admit `name`."""
+        if self.apps and not any(fnmatch.fnmatchcase(name, p) for p in self.apps):
+            return False
+        return not any(fnmatch.fnmatchcase(name, p) for p in self.exclude_apps)
 
     @property
     def uses_local_login(self) -> bool:
@@ -107,11 +117,16 @@ def parse_accounts(text: str) -> List[Account]:
         orgs = raw.get("orgs", [])
         if isinstance(orgs, str):
             orgs = [orgs]
+        patterns = {}
+        for key in ("apps", "exclude_apps"):
+            value = raw.get(key, [])
+            patterns[key] = tuple([value] if isinstance(value, str) else value)
         accounts.append(Account(
             name=name,
             token_source=raw.get("token", "fly"),
             orgs=tuple(orgs),
             read_only=bool(raw.get("read_only", False)),
+            **patterns,
         ))
     if not accounts:
         raise ConfigError("no [[account]] entries")

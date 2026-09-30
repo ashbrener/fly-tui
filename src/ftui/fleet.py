@@ -234,6 +234,7 @@ class FleetClient:
             apps = await self._apps_rest(account)
         if account.orgs:
             apps = [a for a in apps if a.org in account.orgs]
+        apps = [a for a in apps if account.shows_app(a.name)]
         return sorted(apps, key=lambda a: (a.org, a.name))
 
     async def list_apps(self) -> Tuple[List[AppRef], Dict[str, str]]:
