@@ -275,12 +275,17 @@ class FTUI(App):
 
     CSS_PATH = "styles.tcss"
 
-    def __init__(self, refresh_interval: int = 5):
+    def __init__(self, refresh_interval: int = 5, fleet_screen: Optional[Screen] = None):
         super().__init__()
         self.client = FlyClient(refresh_interval=refresh_interval)
         self.app_name: str = "Loading..."
+        # Multi-account view (ftui.fleet_screen); None keeps the single-app view.
+        self.fleet_screen = fleet_screen
 
     def on_mount(self) -> None:
+        if self.fleet_screen is not None:
+            self.push_screen(self.fleet_screen)
+            return
         # Show the dashboard immediately
         self.push_screen(MachineListScreen())
         self.run_worker(self.initialize_app_name())
